@@ -118,8 +118,15 @@ const fetchLatestFallback = async (base: string): Promise<Rate> => {
  */
 export const fetchCurrency = async (
 	base: string = "EUR",
-	date: Date | number = new Date(),
+	date?: Date | number,
 ): Promise<Rate> => {
+	if (date === undefined) {
+		const res = await fetchLatestFallback(base);
+		return {
+			...res,
+			outofrange: false,
+		};
+	}
 	const targetDateObj = typeof date === "number" ? new Date(date) : date;
 	const { year, yearStr, monthStr, fullDate } = getDateParts(targetDateObj);
 
