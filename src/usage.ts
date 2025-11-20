@@ -1,4 +1,3 @@
-// How to use kurrency by github file
 /**
  * 汇率数据结构 (与 kurrency 项目存储结构保持一致)
  */
@@ -18,6 +17,10 @@ export interface Rate {
 	base: string;
 	/** 相对基准货币的汇率表 */
 	rates: Record<string, number>;
+	/** * 标识数据是否超出范围 (Fallback 模式)
+	 * 当请求日期无法获取，降级返回 latest 数据时为 true
+	 */
+	outofrange?: boolean;
 }
 
 // 配置项：仓库分支与地址
@@ -38,8 +41,9 @@ const getDateParts = (inputDate: Date) => {
 	const pad = (n: number) => n.toString().padStart(2, "0");
 
 	return {
-		year: y.toString(),
-		month: pad(m),
+		year: y, // 保持为 number 以便进行比较
+		yearStr: y.toString(),
+		monthStr: pad(m),
 		fullDate: `${y}-${pad(m)}-${pad(d)}`, // YYYY-MM-DD
 	};
 };
@@ -51,7 +55,7 @@ const getDateParts = (inputDate: Date) => {
 const rebaseRates = (dailyData: DailyRate, newBase: string): Rate => {
 	// 如果请求的就是原始基准 (EUR)，直接返回
 	if (newBase === dailyData.base) {
-		return dailyData;
+		return { ...dailyData }; // 返回浅拷贝以匹配 Rate 接口
 	}
 
 	// 获取新基准货币相对于 EUR 的汇率 (例如 EUR -> USD)
@@ -64,7 +68,6 @@ const rebaseRates = (dailyData: DailyRate, newBase: string): Rate => {
 	// 重新计算所有汇率
 	const newRates = Object.entries(dailyData.rates).reduce(
 		(acc, [currency, rate]) => {
-			// 避免精度问题，实际项目中通常会引入 Decimal 库，这里使用原生浮点
 			acc[currency] = rate / baseRate;
 			return acc;
 		},
@@ -82,8 +85,34 @@ const rebaseRates = (dailyData: DailyRate, newBase: string): Rate => {
 };
 
 /**
+ * 内部函数：获取最新数据作为降级方案
+ */
+const fetchLatestFallback = async (base: string): Promise<Rate> => {
+	const url = `${REPO_CONFIG.baseUrl}/latest.json`;
+	const response = await fetch(url);
+
+	if (!response.ok) {
+		throw new Error(
+			`Failed to fetch latest data fallback: ${response.statusText}`,
+		);
+	}
+
+	// latest.json 通常是一个单独的 DailyRate 对象
+	const latestData: DailyRate = await response.json();
+
+	// 计算汇率
+	const rebased = rebaseRates(latestData, base);
+
+	// 添加 outofrange 标记
+	return {
+		...rebased,
+		outofrange: true,
+	};
+};
+
+/**
  * 获取汇率信息
- * * @param base 基础货币代码 (e.g., "USD", "CNY")
+ * @param base 基础货币代码 (e.g., "USD", "CNY")
  * @param date 指定日期，不指定则使用当前日期
  * @returns 汇率数据 Promise
  */
@@ -92,38 +121,50 @@ export const fetchCurrency = async (
 	date: Date | number = new Date(),
 ): Promise<Rate> => {
 	const targetDateObj = typeof date === "number" ? new Date(date) : date;
-	const { year, month, fullDate } = getDateParts(targetDateObj);
+	const { year, yearStr, monthStr, fullDate } = getDateParts(targetDateObj);
 
-	// 1. 构建 GitHub Raw URL
-	const url = `${REPO_CONFIG.baseUrl}/${year}/${month}/data.json`;
+	// 1. 严格校验：如果日期早于 1999 年，抛出错误
+	if (year < 1999) {
+		throw new Error("Exchange rate data is not available prior to 1999.");
+	}
+
+	// 2. 构建特定日期的 GitHub Raw URL
+	const url = `${REPO_CONFIG.baseUrl}/${yearStr}/${monthStr}/data.json`;
 
 	try {
-		// 2. 请求数据
+		// 3. 尝试请求指定日期的数据
 		const response = await fetch(url);
+
+		// 如果请求失败 (404 等)，手动抛出错误以进入 catch 块进行降级处理
 		if (!response.ok) {
-			if (response.status === 404) {
-				throw new Error(
-					`No data found for ${year}/${month}. The date might be too early or in the future.`,
-				);
-			}
-			throw new Error(
-				`GitHub API Error: ${response.status} ${response.statusText}`,
-			);
+			throw new Error(`Data missing for ${yearStr}/${monthStr}`);
 		}
 
 		const dataList: DailyRate[] = await response.json();
 
-		// 3. 查找最近的交易日
-		// 数据预设是按日期降序排列的 (2023-10-20, 2023-10-19...)
-		// 我们需要找到第一个 date <= targetDate 的记录
+		// 4. 查找最近的交易日 (date <= targetDate)
+		// 注意：如果当月数据中所有日期都比 fullDate 大（理论上不应发生，除非文件放错），
+		// 或者找不到匹配项，我们应该降级或者取当月最早/最晚。
 		const matchedRecord =
 			dataList.find((item) => item.date <= fullDate) ??
 			dataList[dataList.length - 1];
 
-		// 4. 转换基准货币并返回
+		if (!matchedRecord) {
+			throw new Error(`No matching date found inside ${yearStr}/${monthStr}`);
+		}
+
+		// 5. 成功获取指定日期，正常返回
 		return rebaseRates(matchedRecord, base);
 	} catch (error) {
-		// 简单的错误透传，实际使用可根据需要封装
-		return Promise.reject(error);
+		// 6. 捕获任何获取指定日期时的错误（404, 网络问题, 解析错误, 找不到对应日期记录）
+		// console.warn("Specific date fetch failed, falling back to latest:", error);
+
+		try {
+			// 执行降级逻辑：获取 latest.json
+			return await fetchLatestFallback(base);
+		} catch (fallbackError) {
+			// 如果 latest 也获取失败，则彻底抛出错误
+			return Promise.reject(fallbackError);
+		}
 	}
 };
