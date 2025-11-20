@@ -31,7 +31,7 @@ jobs:
 
       # 第三步：安装依赖
       - name: Install dependencies
-        run: npm ci
+        run: npm install
         # 如果你没有提交 package-lock.json，请改用 npm install
 
       # 第四步：运行更新脚本
