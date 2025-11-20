@@ -116,13 +116,9 @@ export const fetchCurrency = async (
 		// 3. 查找最近的交易日
 		// 数据预设是按日期降序排列的 (2023-10-20, 2023-10-19...)
 		// 我们需要找到第一个 date <= targetDate 的记录
-		const matchedRecord = dataList.find((item) => item.date <= fullDate);
-
-		if (!matchedRecord) {
-			throw new Error(
-				`No exchange rate data found on or before ${fullDate} in the records of ${year}/${month}.`,
-			);
-		}
+		const matchedRecord =
+			dataList.find((item) => item.date <= fullDate) ??
+			dataList[dataList.length - 1];
 
 		// 4. 转换基准货币并返回
 		return rebaseRates(matchedRecord, base);
