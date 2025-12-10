@@ -1,0 +1,59 @@
+name: Daily Exchange Rate Update
+
+on:
+  # 1. 定时触发：UTC时间每天 17:00 (约为欧洲中部时间 18:00-19:00)
+  # ECB 通常在 CET 16:00 左右更新数据，设置在 17:00 UTC 可以确保数据已就绪
+  schedule:
+    - cron: '0 17 * * *'
+  
+  # 2. 手动触发：允许你在 GitHub Actions 页面手动点击按钮运行（方便测试）
+  workflow_dispatch:
+
+# 必须赋予写入权限，否则无法 push 代码
+permissions:
+  contents: write
+
+jobs:
+  update-rates:
+    runs-on: ubuntu-latest
+    
+    steps:
+      # 第一步：检出代码
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 第二步：安装 Node.js 环境
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm' # 启用缓存加快安装速度
+
+      # 第三步：安装依赖
+      - name: Install dependencies
+        run: npm install
+        # 如果你没有提交 package-lock.json，请改用 npm install
+
+      # 第四步：运行更新脚本
+      - name: Run update script
+        run: npm run update
+
+      # 第五步：检查变更并提交
+      - name: Commit and Push changes
+        run: |
+          # 配置 Git 身份 (使用 GitHub Actions Bot)
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          
+          # 添加 data 文件夹下的变更
+          git add data/
+          
+          # 检查是否有文件发生了变化
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            echo "Changes detected. Committing..."
+            # 提交信息包含 [skip ci] 可以避免这次提交再次触发其他 CI 流程
+            git commit -m "chore(data): daily exchange rate update [skip ci]"
+            git push
+          fi

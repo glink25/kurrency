@@ -1,0 +1,17 @@
+{
+    "name": "kurrency",
+    "version": "1.0.0",
+    "description": "ECB Currency Exchange Rate Manager",
+    "scripts": {
+        "init": "tsx src/index.ts init",
+        "update": "tsx src/index.ts update"
+    },
+    "dependencies": {
+        "date-fns": "^3.0.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.19.25",
+        "tsx": "^4.0.0",
+        "typescript": "^5.0.0"
+    }
+}
